@@ -5,6 +5,10 @@ import { sendError } from './lib/http.js';
 import { authRouter } from './auth/routes.js';
 import { assetsRouter } from './routes/assets.js';
 import { uploadsRouter } from './routes/uploads.js';
+import { favoritesRouter } from './routes/favorites.js';
+import { collectionsRouter } from './routes/collections.js';
+import { notificationsRouter } from './routes/notifications.js';
+import { downloadsRouter } from './routes/downloads.js';
 
 const app = express();
 
@@ -21,8 +25,16 @@ const healthPayload = () => ({
   ok: true,
   service: 'kontaner-backend',
   env: env.NODE_ENV,
-  version: '0.3.0',
-  routes: ['auth', 'assets', 'uploads'],
+  version: '0.5.0',
+  routes: [
+    'auth',
+    'assets',
+    'uploads',
+    'favorites',
+    'collections',
+    'notifications',
+    'downloads',
+  ],
 });
 app.get('/health', (_req, res) => res.json(healthPayload()));
 app.get('/api/health', (_req, res) => res.json(healthPayload()));
@@ -31,6 +43,10 @@ app.get('/api/health', (_req, res) => res.json(healthPayload()));
 app.use('/api/auth', authRouter);
 app.use('/api/assets', assetsRouter);
 app.use('/api/uploads', uploadsRouter);
+app.use('/api/favorites', favoritesRouter);
+app.use('/api/collections', collectionsRouter);
+app.use('/api/notifications', notificationsRouter);
+app.use('/api/downloads', downloadsRouter);
 
 /* 404 */
 app.use((_req, res) => {

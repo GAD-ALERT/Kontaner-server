@@ -3,6 +3,7 @@ import cors from 'cors';
 import { env } from './env.js';
 import { sendError } from './lib/http.js';
 import { authRouter } from './auth/routes.js';
+import { assetsRouter } from './routes/assets.js';
 
 const app = express();
 
@@ -15,12 +16,19 @@ app.use(
 app.use(express.json({ limit: '2mb' }));
 
 /* Health */
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'kontaner-backend', env: env.NODE_ENV });
+const healthPayload = () => ({
+  ok: true,
+  service: 'kontaner-backend',
+  env: env.NODE_ENV,
+  version: '0.2.0',
+  routes: ['auth', 'assets'],
 });
+app.get('/health', (_req, res) => res.json(healthPayload()));
+app.get('/api/health', (_req, res) => res.json(healthPayload()));
 
 /* API v1 */
 app.use('/api/auth', authRouter);
+app.use('/api/assets', assetsRouter);
 
 /* 404 */
 app.use((_req, res) => {

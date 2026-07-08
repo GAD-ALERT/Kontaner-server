@@ -4,6 +4,7 @@ import { env } from './env.js';
 import { sendError } from './lib/http.js';
 import { authRouter } from './auth/routes.js';
 import { assetsRouter } from './routes/assets.js';
+import { uploadsRouter } from './routes/uploads.js';
 
 const app = express();
 
@@ -20,8 +21,8 @@ const healthPayload = () => ({
   ok: true,
   service: 'kontaner-backend',
   env: env.NODE_ENV,
-  version: '0.2.0',
-  routes: ['auth', 'assets'],
+  version: '0.3.0',
+  routes: ['auth', 'assets', 'uploads'],
 });
 app.get('/health', (_req, res) => res.json(healthPayload()));
 app.get('/api/health', (_req, res) => res.json(healthPayload()));
@@ -29,6 +30,7 @@ app.get('/api/health', (_req, res) => res.json(healthPayload()));
 /* API v1 */
 app.use('/api/auth', authRouter);
 app.use('/api/assets', assetsRouter);
+app.use('/api/uploads', uploadsRouter);
 
 /* 404 */
 app.use((_req, res) => {

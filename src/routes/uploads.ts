@@ -11,7 +11,8 @@ import {
   safeDeleteCloudinary,
   uploadBufferToCloudinary,
 } from '../lib/cloudinary.js';
-import { tagAndDescribeImage } from '../lib/gemini.js';
+import { embedText, tagAndDescribeImage } from '../lib/gemini.js';
+import { embeddingCorpus } from '../lib/search.js';
 
 export const uploadsRouter = Router();
 
@@ -75,12 +76,15 @@ async function runUploadPipeline(
   }
   emit?.('insight', { insight: analysis.insight });
 
-  // 3. Persist asset row
+  // 3. Persist asset row (embedding filled in step 4)
   const [ownerUser] = await db
     .select({ name: users.name })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
+
+  const ownerLabel = ownerUser?.name ?? 'You';
+  const displayTitle = prettifyTitle(originalName);
 
   const [inserted] = await db
     .insert(assets)
@@ -88,8 +92,8 @@ async function runUploadPipeline(
       id: assetId,
       ownerId: userId,
       title: originalName,
-      displayTitle: prettifyTitle(originalName),
-      ownerLabel: ownerUser?.name ?? 'You',
+      displayTitle,
+      ownerLabel,
       type: file.mimetype.startsWith('video/') ? 'VIDEO' : 'PHOTO',
       format: fmtFromMime(file.mimetype),
       sizeLabel: formatBytes(uploaded.bytes),
@@ -109,6 +113,27 @@ async function runUploadPipeline(
       premium: false,
     })
     .returning();
+
+  // 4. Embed for NL search — best-effort, never blocks the response
+  //    (search can still fall back to text ILIKE if this fails)
+  emit?.('status', { stage: 'indexing' });
+  try {
+    const corpus = embeddingCorpus({
+      displayTitle,
+      tags: analysis.tags,
+      aiInsight: analysis.insight,
+      ownerLabel,
+    });
+    const vec = await embedText(corpus);
+    if (vec.length > 0) {
+      await db
+        .update(assets)
+        .set({ embedding: vec })
+        .where(eq(assets.id, assetId));
+    }
+  } catch (err) {
+    console.warn('[uploads] embedding failed, will be backfilled later:', err);
+  }
 
   emit?.('done', {
     asset: toPublicAsset(inserted),

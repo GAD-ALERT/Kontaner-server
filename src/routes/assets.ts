@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { assets } from '../db/schema.js';
@@ -24,6 +24,9 @@ const searchQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(24),
   mode: z.enum(['auto', 'text', 'semantic']).default('auto'),
+  type: z.enum(['PHOTO', 'VIDEO', 'GRAPHIC', '3D']).optional(),
+  tier: z.enum(['free', 'premium', 'all']).default('all'),
+  sort: z.enum(['relevance', 'popular', 'new', 'trending']).default('relevance'),
 });
 
 /* GET /api/assets — paginated browse feed */
@@ -92,8 +95,12 @@ assetsRouter.get('/search', attachUser, async (req, res, next) => {
     if (!parsed.success) {
       throw badRequest(parsed.error.issues[0]?.message ?? 'Invalid query');
     }
-    const { q, page, pageSize, mode } = parsed.data;
+    const { q, page, pageSize, mode, type, tier, sort } = parsed.data;
     const offset = (page - 1) * pageSize;
+    const filters = [];
+    if (type) filters.push(eq(assets.type, type));
+    if (tier === 'free') filters.push(eq(assets.premium, false));
+    if (tier === 'premium') filters.push(eq(assets.premium, true));
 
     const trySemantic = mode !== 'text';
     if (trySemantic) {
@@ -103,13 +110,17 @@ assetsRouter.get('/search', attachUser, async (req, res, next) => {
           const rows = await db
             .select()
             .from(assets)
-            .where(sql`${assets.embedding} IS NOT NULL`);
+            .where(and(sql`${assets.embedding} IS NOT NULL`, ...filters));
 
-          const ranked = rankByEmbedding(
+          let ranked = rankByEmbedding(
             rows.map((r) => ({ ...r, embedding: r.embedding ?? [] })),
             queryVec,
-            { topK: pageSize + offset, minScore: 0.15 },
+            { topK: 10000, minScore: 0.15 },
           );
+
+          if (sort === 'popular') ranked = ranked.sort((a, b) => b.item.likes - a.item.likes);
+          if (sort === 'trending') ranked = ranked.sort((a, b) => b.item.downloads - a.item.downloads);
+          if (sort === 'new') ranked = ranked.sort((a, b) => b.item.createdAt.getTime() - a.item.createdAt.getTime());
 
           if (ranked.length > 0) {
             const paged = ranked.slice(offset, offset + pageSize);
@@ -143,30 +154,59 @@ assetsRouter.get('/search', attachUser, async (req, res, next) => {
 
     // ── Text fallback ──
     const like = `%${q}%`;
-    const rows = await db
+    const textFilter = or(
+      ilike(assets.title, like),
+      ilike(assets.displayTitle, like),
+      ilike(assets.ownerLabel, like),
+      sql`${assets.tags}::text ILIKE ${like}`,
+      sql`coalesce(${assets.aiInsight}, '') ILIKE ${like}`,
+    );
+    const where = and(textFilter, ...filters);
+    const order = sort === 'new' ? desc(assets.createdAt)
+      : sort === 'trending' ? desc(assets.downloads)
+        : desc(assets.likes);
+    const [rows, [{ count }]] = await Promise.all([db
       .select()
       .from(assets)
-      .where(
-        or(
-          ilike(assets.title, like),
-          ilike(assets.displayTitle, like),
-          ilike(assets.ownerLabel, like),
-          sql`${assets.tags}::text ILIKE ${like}`,
-          sql`coalesce(${assets.aiInsight}, '') ILIKE ${like}`,
-        ),
-      )
-      .orderBy(desc(assets.likes))
+      .where(where)
+      .orderBy(order)
       .limit(pageSize)
-      .offset(offset);
+      .offset(offset), db.select({ count: sql<number>`count(*)::int` }).from(assets).where(where)]);
 
     res.json({
       items: rows.map(toPublicAsset),
       query: q,
       page,
       pageSize,
-      total: rows.length,
+      total: Number(count),
       mode: 'text',
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+assetsRouter.get('/:id/similar', attachUser, async (req, res, next) => {
+  try {
+    const id = String(req.params.id ?? '');
+    const parsedLimit = z.coerce.number().int().min(1).max(12).default(4).safeParse(req.query.limit);
+    if (!parsedLimit.success) throw badRequest('Similar asset limit must be between 1 and 12');
+    const limit = parsedLimit.data;
+    const [source] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+    if (!source) throw notFound('Asset not found');
+    const candidates = await db.select().from(assets).where(and(ne(assets.id, id), eq(assets.type, source.type)));
+
+    let ranked: Array<{ item: typeof source; score: number }>;
+    if (source.embedding?.length) {
+      ranked = rankByEmbedding(candidates, source.embedding, { topK: limit, minScore: 0 });
+    } else {
+      const sourceTags = new Set(source.tags.map((tag) => tag.toLowerCase()));
+      ranked = candidates.map((item) => ({
+        item,
+        score: item.tags.reduce((score, tag) => score + (sourceTags.has(tag.toLowerCase()) ? 1 : 0), 0),
+      })).sort((a, b) => b.score - a.score || b.item.likes - a.item.likes).slice(0, limit);
+    }
+    res.json({ items: ranked.map(({ item, score }) => ({ ...toPublicAsset(item), relevance: Number(score.toFixed(4)) })) });
   } catch (err) {
     next(err);
   }

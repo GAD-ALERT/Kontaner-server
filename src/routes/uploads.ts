@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { db } from '../db/client.js';
 import { assets, users } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { desc, eq, sql } from 'drizzle-orm';
 import { requireAuth } from '../auth/middleware.js';
 import { badRequest, HttpError } from '../lib/http.js';
 import { newId } from '../lib/ids.js';
@@ -13,8 +13,50 @@ import {
 } from '../lib/cloudinary.js';
 import { embedText, tagAndDescribeImage } from '../lib/gemini.js';
 import { embeddingCorpus } from '../lib/search.js';
+import { z } from 'zod';
+import { forbidden, notFound } from '../lib/http.js';
 
 export const uploadsRouter = Router();
+
+/* GET /api/uploads — assets owned by the current user */
+uploadsRouter.get('/', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await db
+      .select()
+      .from(assets)
+      .where(eq(assets.ownerId, req.user!.sub))
+      .orderBy(desc(assets.createdAt));
+    res.json({ items: rows.map(toPublicAsset) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+uploadsRouter.get('/usage', requireAuth, async (req, res, next) => {
+  try {
+    const [totals, breakdown, [user]] = await Promise.all([
+      db.select({
+        bytes: sql<string>`coalesce(sum(${assets.sizeBytes}), 0)::bigint`,
+        count: sql<number>`count(*)::int`,
+      }).from(assets).where(eq(assets.ownerId, req.user!.sub)),
+      db.select({
+        type: assets.type,
+        bytes: sql<string>`coalesce(sum(${assets.sizeBytes}), 0)::bigint`,
+        count: sql<number>`count(*)::int`,
+      }).from(assets).where(eq(assets.ownerId, req.user!.sub)).groupBy(assets.type),
+      db.select({ quotaBytes: users.storageQuotaBytes }).from(users).where(eq(users.id, req.user!.sub)).limit(1),
+    ]);
+    if (!user) throw notFound('Account not found');
+    const usedBytes = Number(totals[0]?.bytes ?? 0);
+    res.json({
+      usedBytes,
+      quotaBytes: user.quotaBytes,
+      remainingBytes: Math.max(0, user.quotaBytes - usedBytes),
+      assetCount: totals[0]?.count ?? 0,
+      breakdown: breakdown.map((row) => ({ type: row.type, bytes: Number(row.bytes), count: row.count })),
+    });
+  } catch (err) { next(err); }
+});
 
 /** Cap uploads at 25 MB — Cloudinary free tier limit for anonymous plans. */
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -51,6 +93,17 @@ async function runUploadPipeline(
   emit?: (evt: string, data: unknown) => void,
 ): Promise<PipelineResult> {
   const assetId = newId('asset', 8);
+
+  const [[account], [usage]] = await Promise.all([
+    db.select({ quotaBytes: users.storageQuotaBytes }).from(users).where(eq(users.id, userId)).limit(1),
+    db.select({ bytes: sql<string>`coalesce(sum(${assets.sizeBytes}), 0)::bigint` })
+      .from(assets).where(eq(assets.ownerId, userId)),
+  ]);
+  if (!account) throw new HttpError(401, 'Account no longer exists', 'UNAUTHORIZED');
+  const usedBytes = Number(usage?.bytes ?? 0);
+  if (usedBytes + file.size > account.quotaBytes) {
+    throw new HttpError(413, 'This upload would exceed your storage quota', 'STORAGE_QUOTA_EXCEEDED');
+  }
 
   // 1. Cloudinary
   emit?.('status', { stage: 'uploading' });
@@ -172,6 +225,47 @@ uploadsRouter.post(
     }
   },
 );
+
+const updateUploadSchema = z.object({
+  displayTitle: z.string().trim().min(1).max(200).optional(),
+  tags: z.array(z.string().trim().min(1).max(80)).max(40).optional(),
+  aiInsight: z.string().trim().max(2000).nullable().optional(),
+  premium: z.boolean().optional(),
+}).refine((value) => Object.keys(value).length > 0, 'At least one field is required');
+
+/* PATCH /api/uploads/:id — update metadata for an owned asset */
+uploadsRouter.patch('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id ?? '');
+    const parsed = updateUploadSchema.safeParse(req.body);
+    if (!parsed.success) throw badRequest(parsed.error.issues[0]?.message ?? 'Invalid payload');
+
+    const [existing] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+    if (!existing) throw notFound('Asset not found');
+    if (existing.ownerId !== req.user!.sub) throw forbidden('You do not own this asset');
+
+    const [updated] = await db.update(assets).set(parsed.data).where(eq(assets.id, id)).returning();
+    res.json({ asset: toPublicAsset(updated) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* DELETE /api/uploads/:id — delete an owned asset and its Cloudinary object */
+uploadsRouter.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    const id = String(req.params.id ?? '');
+    const [existing] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+    if (!existing) throw notFound('Asset not found');
+    if (existing.ownerId !== req.user!.sub) throw forbidden('You do not own this asset');
+
+    await db.delete(assets).where(eq(assets.id, id));
+    if (existing.cloudinaryPublicId) await safeDeleteCloudinary(existing.cloudinaryPublicId);
+    res.json({ ok: true, id });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /* =========================================================
    POST /api/uploads/stream

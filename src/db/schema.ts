@@ -1,5 +1,6 @@
 import {
   boolean,
+  bigint,
   index,
   integer,
   jsonb,
@@ -12,6 +13,13 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
+
+export interface NotificationPreferences {
+  digest: boolean;
+  activity: boolean;
+  promotions: boolean;
+  security: boolean;
+}
 
 /* =============================================================
    users
@@ -27,12 +35,33 @@ export const users = pgTable(
     bio: text('bio'),
     location: varchar('location', { length: 120 }),
     avatarUrl: text('avatar_url'),
+    avatarPublicId: text('avatar_public_id'),
     avatarInitials: varchar('avatar_initials', { length: 4 }).notNull(),
+    notificationPreferences: jsonb('notification_preferences').$type<NotificationPreferences>()
+      .default({ digest: true, activity: true, promotions: false, security: true }).notNull(),
+    storageQuotaBytes: bigint('storage_quota_bytes', { mode: 'number' })
+      .default(20 * 1024 * 1024 * 1024).notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
     emailUnique: uniqueIndex('users_email_lower_unique').on(t.email),
+  }),
+);
+
+export const passwordResetTokens = pgTable(
+  'password_reset_tokens',
+  {
+    id: varchar('id', { length: 48 }).primaryKey(),
+    userId: varchar('user_id', { length: 32 }).notNull().references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    tokenHashUnique: uniqueIndex('password_reset_tokens_hash_unique').on(t.tokenHash),
+    userIdx: index('password_reset_tokens_user_idx').on(t.userId),
   }),
 );
 

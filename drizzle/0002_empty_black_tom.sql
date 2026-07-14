@@ -1,0 +1,2 @@
+ALTER TABLE "users" ADD COLUMN "notification_preferences" jsonb DEFAULT '{"digest":true,"activity":true,"promotions":false,"security":true}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "storage_quota_bytes" bigint DEFAULT 21474836480 NOT NULL;

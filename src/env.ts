@@ -17,6 +17,11 @@ const envSchema = z.object({
   CLOUDINARY_API_SECRET: z.string().min(1),
 
   GEMINI_API_KEY: z.string().min(1),
+
+  GMAIL_SMTP_USER: z.string().email().optional(),
+  GMAIL_SMTP_APP_PASSWORD: z.string().min(1).optional(),
+  EMAIL_FROM: z.string().email().optional(),
+  APP_URL: z.string().url().default('http://localhost:5173'),
 });
 
 const parsed = envSchema.safeParse(process.env);

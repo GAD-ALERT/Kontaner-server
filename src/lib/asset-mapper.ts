@@ -13,6 +13,7 @@ export interface PublicAsset {
   size: string;
   date: string;
   owner: string;
+  creatorId: string | null;
   visual: string;
   src: string | null;
   tags: string[];
@@ -32,6 +33,7 @@ export function toPublicAsset(row: AssetRow): PublicAsset {
     size: row.sizeLabel,
     date: row.date,
     owner: row.ownerLabel,
+    creatorId: row.ownerId,
     visual: row.visual,
     src: row.src,
     tags: row.tags,

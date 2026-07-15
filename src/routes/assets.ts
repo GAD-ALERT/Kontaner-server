@@ -212,6 +212,26 @@ assetsRouter.get('/:id/similar', attachUser, async (req, res, next) => {
   }
 });
 
+assetsRouter.get('/stats', async (_req, res, next) => {
+  try {
+    const [byType, [totals]] = await Promise.all([
+      db.select({ type: assets.type, count: sql<number>`count(*)::int` })
+        .from(assets).groupBy(assets.type),
+      db.select({
+        total: sql<number>`count(*)::int`,
+        free: sql<number>`count(*) filter (where ${assets.premium} = false)::int`,
+        premium: sql<number>`count(*) filter (where ${assets.premium} = true)::int`,
+        downloads: sql<number>`coalesce(sum(${assets.downloads}), 0)::int`,
+        creators: sql<number>`count(distinct ${assets.ownerId})::int`,
+      }).from(assets),
+    ]);
+    res.json({
+      total: totals?.total ?? 0, free: totals?.free ?? 0, premium: totals?.premium ?? 0,
+      downloads: totals?.downloads ?? 0, creators: totals?.creators ?? 0, byType,
+    });
+  } catch (err) { next(err); }
+});
+
 /* GET /api/assets/:id */
 assetsRouter.get('/:id', attachUser, async (req, res, next) => {
   try {

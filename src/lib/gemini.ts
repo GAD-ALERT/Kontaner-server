@@ -5,12 +5,12 @@ const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
 
 /* =========================================================
    Model handles
-   - gemini-2.0-flash: multimodal — accepts an image + prompt,
+   - GEMINI_VISION_MODEL: multimodal — accepts an image + prompt,
      returns structured JSON. Best speed/cost/quality for tagging.
-   - text-embedding-004: 768-dim vectors for NL search on Day 4.
+   - GEMINI_EMBEDDING_MODEL: vectors for natural-language search.
    ========================================================= */
 const visionModel = genAI.getGenerativeModel({
-  model: 'gemini-2.0-flash',
+  model: env.GEMINI_VISION_MODEL,
   generationConfig: {
     responseMimeType: 'application/json',
     temperature: 0.3,
@@ -19,7 +19,7 @@ const visionModel = genAI.getGenerativeModel({
 });
 
 const embeddingModel = genAI.getGenerativeModel({
-  model: 'text-embedding-004',
+  model: env.GEMINI_EMBEDDING_MODEL,
 });
 
 /* =========================================================

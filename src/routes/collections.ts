@@ -6,6 +6,7 @@ import {
   assets,
   collectionItems,
   collections,
+  users,
   type CollectionRow,
 } from '../db/schema.js';
 import { attachUser, requireAuth } from '../auth/middleware.js';
@@ -159,6 +160,35 @@ collectionsRouter.post('/', requireAuth, async (req, res, next) => {
   }
 });
 
+collectionsRouter.get('/public', async (_req, res, next) => {
+  try {
+    const rows = await db.select({
+      collection: collections,
+      creatorId: users.id,
+      creatorName: users.name,
+      creatorAvatarUrl: users.avatarUrl,
+      creatorInitials: users.avatarInitials,
+    }).from(collections).innerJoin(users, eq(collections.ownerId, users.id))
+      .where(eq(collections.isPublic, true)).orderBy(desc(collections.updatedAt)).limit(24);
+
+    const ids = rows.map((row) => row.collection.id);
+    const itemRows = ids.length > 0
+      ? await db.select({ collectionId: collectionItems.collectionId, assetId: collectionItems.assetId })
+        .from(collectionItems).where(inArray(collectionItems.collectionId, ids))
+      : [];
+    const grouped = new Map<string, string[]>();
+    for (const item of itemRows) grouped.set(item.collectionId, [...(grouped.get(item.collectionId) ?? []), item.assetId]);
+
+    res.json({ items: rows.map((row) => ({
+      ...summarise(row.collection, grouped.get(row.collection.id) ?? []),
+      creator: {
+        id: row.creatorId, name: row.creatorName,
+        avatarUrl: row.creatorAvatarUrl ?? '', initials: row.creatorInitials,
+      },
+    })) });
+  } catch (err) { next(err); }
+});
+
 /* ================================================================
    GET /api/collections/:id
    Public collections are readable by anyone. Private only by owner.
@@ -185,11 +215,14 @@ collectionsRouter.get('/:id', attachUser, async (req, res, next) => {
       .orderBy(desc(collectionItems.createdAt));
 
     const items = itemsRows.map((r) => toPublicAsset(r.asset));
+    const [owner] = await db.select({
+      id: users.id, name: users.name, avatarUrl: users.avatarUrl, initials: users.avatarInitials,
+    }).from(users).where(eq(users.id, row.ownerId)).limit(1);
     res.json({
-      collection: summarise(
-        row,
-        items.map((a) => a.id),
-      ),
+      collection: {
+        ...summarise(row, items.map((a) => a.id)),
+        creator: owner ? { ...owner, avatarUrl: owner.avatarUrl ?? '' } : null,
+      },
       items,
     });
   } catch (err) {

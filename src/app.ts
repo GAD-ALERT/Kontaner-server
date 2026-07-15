@@ -12,6 +12,7 @@ import { favoritesRouter } from './routes/favorites.js';
 import { collectionsRouter } from './routes/collections.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { downloadsRouter } from './routes/downloads.js';
+import { creatorsRouter } from './routes/creators.js';
 
 const limiter = (windowMs: number, limit: number) => rateLimit({
   windowMs,
@@ -49,7 +50,7 @@ export function createApp() {
 
   const healthPayload = () => ({
     ok: true, service: 'kontaner-backend', env: env.NODE_ENV, version: '0.7.0',
-    routes: ['auth', 'assets', 'uploads', 'favorites', 'collections', 'notifications', 'downloads'],
+    routes: ['auth', 'assets', 'uploads', 'favorites', 'collections', 'notifications', 'downloads', 'creators'],
   });
   app.get('/health', (_req, res) => res.json(healthPayload()));
   app.get('/api/health', (_req, res) => res.json(healthPayload()));
@@ -61,6 +62,7 @@ export function createApp() {
   app.use('/api/collections', collectionsRouter);
   app.use('/api/notifications', notificationsRouter);
   app.use('/api/downloads', limiter(60_000, 60), downloadsRouter);
+  app.use('/api/creators', limiter(60_000, 120), creatorsRouter);
 
   app.use((_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => sendError(res, err));

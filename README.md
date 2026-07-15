@@ -13,7 +13,7 @@ the Gemini-backed AI features (tagging, insight, natural-language search).
 | Database | Postgres (works with any provider — production runs on [Neon](https://neon.tech)) |
 | Auth | JWT + bcrypt |
 | Uploads | Multer → Cloudinary streaming |
-| AI | `@google/generative-ai` — `gemini-2.0-flash` (tagging + insight), `text-embedding-004` (NL search) |
+| AI | `@google/generative-ai` — configurable Gemini vision and embedding models |
 | Validation | Zod schemas at every route boundary |
 
 ## Setup

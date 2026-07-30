@@ -17,7 +17,7 @@ const envSchema = z.object({
   CLOUDINARY_API_SECRET: z.string().min(1),
 
   GEMINI_API_KEY: z.string().min(1),
-  GEMINI_VISION_MODEL: z.string().min(1).default('gemini-2.0-flash-lite'),
+  GEMINI_VISION_MODEL: z.string().min(1).default('gemini-flash-lite-latest'),
   GEMINI_EMBEDDING_MODEL: z.string().min(1).default('gemini-embedding-001'),
 
   GMAIL_SMTP_USER: z.string().email().optional(),

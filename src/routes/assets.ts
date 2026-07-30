@@ -81,7 +81,7 @@ assetsRouter.get('/', attachUser, async (req, res, next) => {
 /**
  * GET /api/assets/search?q=…
  *
- * Semantic mode: embed the query with Gemini's text-embedding-004,
+ * Semantic mode: embed the query with Gemini's embedding model,
  * cosine-rank every asset whose embedding is populated, return top-K.
  * Text mode: fall back to case-insensitive LIKE across
  * title/displayTitle/owner/tags/aiInsight.
@@ -105,7 +105,7 @@ assetsRouter.get('/search', attachUser, async (req, res, next) => {
     const trySemantic = mode !== 'text';
     if (trySemantic) {
       try {
-        const queryVec = await embedText(q);
+        const queryVec = await embedText(q, 'query');
         if (queryVec.length > 0) {
           const rows = await db
             .select()

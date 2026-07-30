@@ -1,4 +1,8 @@
-import { GoogleGenerativeAI, type Part } from '@google/generative-ai';
+import {
+  GoogleGenerativeAI,
+  TaskType,
+  type Part,
+} from '@google/generative-ai';
 import { env } from '../env.js';
 
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY);
@@ -102,16 +106,39 @@ export async function tagAndDescribeImage(
    Returned as a plain number[] so it stores cleanly as JSONB.
    ========================================================= */
 
-export async function embedText(text: string): Promise<number[]> {
+/**
+ * Which side of the retrieval pair a text belongs to. Gemini's embedding
+ * model produces sharper matches when the stored asset and the search query
+ * are embedded with different task types, so callers must be explicit:
+ *   - 'document' → the catalogue text we persist (default)
+ *   - 'query'    → the user's search string at query time
+ */
+export type EmbedTask = 'document' | 'query';
+
+const TASK_TYPE: Record<EmbedTask, TaskType> = {
+  document: TaskType.RETRIEVAL_DOCUMENT,
+  query: TaskType.RETRIEVAL_QUERY,
+};
+
+export async function embedText(
+  text: string,
+  task: EmbedTask = 'document',
+): Promise<number[]> {
   const trimmed = text.trim();
   if (!trimmed) return [];
-  const result = await embeddingModel.embedContent(trimmed);
+  const result = await embeddingModel.embedContent({
+    content: { role: 'user', parts: [{ text: trimmed }] },
+    taskType: TASK_TYPE[task],
+  });
   return result.embedding.values ?? [];
 }
 
 /** Batch embed — one API call per string but parallelised. */
-export async function embedTexts(texts: string[]): Promise<number[][]> {
-  return Promise.all(texts.map((t) => embedText(t)));
+export async function embedTexts(
+  texts: string[],
+  task: EmbedTask = 'document',
+): Promise<number[][]> {
+  return Promise.all(texts.map((t) => embedText(t, task)));
 }
 
 /* =========================================================

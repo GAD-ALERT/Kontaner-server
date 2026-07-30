@@ -6,10 +6,14 @@ import { embedText } from '../lib/gemini.js';
 import { embeddingCorpus } from '../lib/search.js';
 
 /**
- * Backfill embeddings for every asset that doesn't have one yet.
- * Idempotent — re-running skips already-embedded rows.
+ * Backfill embeddings for assets.
+ * Default: idempotent — only embeds rows that don't have one yet.
+ * `--force` / `--all`: re-embeds every asset. Use this once after changing
+ *   the embedding model or task type so old vectors match the new ones.
  */
 async function main(): Promise<void> {
+  const force = process.argv.includes('--force') || process.argv.includes('--all');
+
   const rows = await db
     .select({
       id: assets.id,
@@ -19,14 +23,14 @@ async function main(): Promise<void> {
       ownerLabel: assets.ownerLabel,
     })
     .from(assets)
-    .where(sql`${assets.embedding} IS NULL`);
+    .where(force ? undefined : sql`${assets.embedding} IS NULL`);
 
   if (rows.length === 0) {
     console.log('✓ All assets already embedded');
     process.exit(0);
   }
 
-  console.log(`▶ Embedding ${rows.length} assets…`);
+  console.log(`▶ Embedding ${rows.length} assets${force ? ' (force: re-embedding all)' : ''}…`);
 
   let done = 0;
   const startedAt = Date.now();

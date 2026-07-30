@@ -114,6 +114,23 @@ async function runUploadPipeline(
   });
   emit?.('status', { stage: 'uploaded', url: uploaded.url });
 
+  // Everything past the upload can fail (Gemini, DB). If it does, the
+  // Cloudinary object is already live — roll it back so we don't orphan it.
+  try {
+    return await finishUploadPipeline(userId, file, assetId, uploaded, emit);
+  } catch (err) {
+    await safeDeleteCloudinary(uploaded.publicId);
+    throw err;
+  }
+}
+
+async function finishUploadPipeline(
+  userId: string,
+  file: Express.Multer.File,
+  assetId: string,
+  uploaded: Awaited<ReturnType<typeof uploadBufferToCloudinary>>,
+  emit?: (evt: string, data: unknown) => void,
+): Promise<PipelineResult> {
   // 2. Gemini tagging
   emit?.('status', { stage: 'analyzing' });
   const originalName = file.originalname || 'Untitled';
@@ -210,17 +227,15 @@ uploadsRouter.post(
   requireAuth,
   upload.single('file'),
   async (req, res, next) => {
-    let uploadedPublicId: string | null = null;
     try {
       if (!req.file) throw badRequest('No file uploaded', 'NO_FILE');
       if (!ACCEPTED_MIMES.has(req.file.mimetype)) {
         throw badRequest('Unsupported file type', 'BAD_MIME');
       }
+      // Cloudinary rollback on partial failure is handled inside the pipeline.
       const result = await runUploadPipeline(req.user!.sub, req.file);
-      uploadedPublicId = null; // pipeline succeeded — nothing to roll back
       res.status(201).json(result);
     } catch (err) {
-      if (uploadedPublicId) await safeDeleteCloudinary(uploadedPublicId);
       next(err);
     }
   },

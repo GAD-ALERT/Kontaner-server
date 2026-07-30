@@ -12,7 +12,7 @@ import {
   uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 export interface NotificationPreferences {
   digest: boolean;
@@ -45,7 +45,7 @@ export const users = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => ({
-    emailUnique: uniqueIndex('users_email_lower_unique').on(t.email),
+    emailUnique: uniqueIndex('users_email_lower_unique').on(sql`lower(${t.email})`),
   }),
 );
 

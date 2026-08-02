@@ -56,11 +56,14 @@ interface CollectionSummary {
   updated: string;
   createdAt: number;
   assetIds: string[];
+  /** Up to four asset image URLs for the cover mosaic (newest first). */
+  coverImages: string[];
 }
 
 function summarise(
   row: CollectionRow,
   assetIds: string[] = [],
+  coverImages: string[] = [],
 ): CollectionSummary {
   const updatedAgo = relativeUpdated(row.updatedAt);
   return {
@@ -73,6 +76,7 @@ function summarise(
     updated: updatedAgo,
     createdAt: row.createdAt.getTime(),
     assetIds,
+    coverImages,
   };
 }
 
@@ -90,6 +94,39 @@ function relativeUpdated(d: Date): string {
   })}`;
 }
 
+const MAX_COVER_IMAGES = 4;
+
+/**
+ * For the given collection ids, return each collection's member asset ids
+ * plus up to four asset image URLs (newest first) for the cover mosaic.
+ */
+async function loadCollectionItems(ids: string[]): Promise<{
+  idsByCollection: Map<string, string[]>;
+  coverByCollection: Map<string, string[]>;
+}> {
+  const idsByCollection = new Map<string, string[]>();
+  const coverByCollection = new Map<string, string[]>();
+  if (ids.length === 0) return { idsByCollection, coverByCollection };
+
+  const rows = await db
+    .select({ collectionId: collectionItems.collectionId, asset: assets })
+    .from(collectionItems)
+    .innerJoin(assets, eq(collectionItems.assetId, assets.id))
+    .where(inArray(collectionItems.collectionId, ids))
+    .orderBy(desc(collectionItems.createdAt));
+
+  for (const row of rows) {
+    const idList = idsByCollection.get(row.collectionId) ?? [];
+    idList.push(row.asset.id);
+    idsByCollection.set(row.collectionId, idList);
+
+    const covers = coverByCollection.get(row.collectionId) ?? [];
+    if (covers.length < MAX_COVER_IMAGES && row.asset.src) covers.push(row.asset.src);
+    coverByCollection.set(row.collectionId, covers);
+  }
+  return { idsByCollection, coverByCollection };
+}
+
 async function loadCollectionsWithIds(
   userId: string,
 ): Promise<CollectionSummary[]> {
@@ -101,22 +138,12 @@ async function loadCollectionsWithIds(
 
   if (rows.length === 0) return [];
 
-  const ids = rows.map((r) => r.id);
-  const items = await db
-    .select({
-      collectionId: collectionItems.collectionId,
-      assetId: collectionItems.assetId,
-    })
-    .from(collectionItems)
-    .where(inArray(collectionItems.collectionId, ids));
-
-  const grouped = new Map<string, string[]>();
-  for (const it of items) {
-    const list = grouped.get(it.collectionId) ?? [];
-    list.push(it.assetId);
-    grouped.set(it.collectionId, list);
-  }
-  return rows.map((r) => summarise(r, grouped.get(r.id) ?? []));
+  const { idsByCollection, coverByCollection } = await loadCollectionItems(
+    rows.map((r) => r.id),
+  );
+  return rows.map((r) =>
+    summarise(r, idsByCollection.get(r.id) ?? [], coverByCollection.get(r.id) ?? []),
+  );
 }
 
 /* ================================================================
@@ -172,15 +199,14 @@ collectionsRouter.get('/public', async (_req, res, next) => {
       .where(eq(collections.isPublic, true)).orderBy(desc(collections.updatedAt)).limit(24);
 
     const ids = rows.map((row) => row.collection.id);
-    const itemRows = ids.length > 0
-      ? await db.select({ collectionId: collectionItems.collectionId, assetId: collectionItems.assetId })
-        .from(collectionItems).where(inArray(collectionItems.collectionId, ids))
-      : [];
-    const grouped = new Map<string, string[]>();
-    for (const item of itemRows) grouped.set(item.collectionId, [...(grouped.get(item.collectionId) ?? []), item.assetId]);
+    const { idsByCollection, coverByCollection } = await loadCollectionItems(ids);
 
     res.json({ items: rows.map((row) => ({
-      ...summarise(row.collection, grouped.get(row.collection.id) ?? []),
+      ...summarise(
+        row.collection,
+        idsByCollection.get(row.collection.id) ?? [],
+        coverByCollection.get(row.collection.id) ?? [],
+      ),
       creator: {
         id: row.creatorId, name: row.creatorName,
         avatarUrl: row.creatorAvatarUrl ?? '', initials: row.creatorInitials,
@@ -220,7 +246,14 @@ collectionsRouter.get('/:id', attachUser, async (req, res, next) => {
     }).from(users).where(eq(users.id, row.ownerId)).limit(1);
     res.json({
       collection: {
-        ...summarise(row, items.map((a) => a.id)),
+        ...summarise(
+          row,
+          items.map((a) => a.id),
+          items
+            .map((a) => a.src)
+            .filter((s): s is string => Boolean(s))
+            .slice(0, MAX_COVER_IMAGES),
+        ),
         creator: owner ? { ...owner, avatarUrl: owner.avatarUrl ?? '' } : null,
       },
       items,
